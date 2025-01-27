@@ -41,22 +41,32 @@ def extraer_tabla_c(pdf_file):
         “states” y “energy met” en sus columnas.
     """
     pdf_file = os.path.abspath(pdf_file)  # Convierte a ruta absoluta
-    print(f"pdf transformado: {pdf_file}")
+    #print(f"pdf a transformar: {pdf_file}")
     dfs = read_pdf(pdf_file, pages="all", multiple_tables=True, lattice=True)
     if not dfs:
         return pd.DataFrame()
+
     for df in dfs:
-        col_names = [str(c).lower() for c in df.columns]
+        # Pasamos a minúsculas
+        df.columns = [c.strip().lower() for c in df.columns]
+        df.columns = [
+            re.sub(r"\s+", " ", col).strip()  # Sustituye secuencias de whitespace (\n, \r, \t...) por espacio
+            for col in df.columns
+        ]
+        
+        col_names = df.columns.to_list()
+        #df["energy shortage (mu)"] = df["energy shortage (mu)"].fillna(0)
         if "states" in col_names and "energy met" in " ".join(col_names):
+            if "region" in df.columns:
+                df["region"] = df["region"].replace("", float("nan"))
+                df["region"] = df["region"].ffill()
+                df["energy shortage (mu)"] = df["energy shortage (mu)"].fillna("0")
             return df
     return pd.DataFrame()
 
 def limpiar_dataframe(df, year=None, month=None, day=None):
-    """Renombra columnas y añade metadatos year, month, day."""
+    """Renombra columnas."""
     df.columns = [str(c).strip().lower() for c in df.columns]
-    df["year"] = year or 0
-    df["month"] = month or 0
-    df["day"] = day or 0
     return df
 
 def parse_year_range(folder_name):
@@ -209,6 +219,22 @@ def main():
         print(f"Usando {max_workers} workers para descargas concurrentes")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             executor.map(download_pdf, all_pdf_urls)
+        
+
+        #Procesar PDFs con Tabula
+        print("Procesando pdf!...")
+        df_master = pd.DataFrame()
+        for pdf_path in glob.glob(os.path.join(download_dir, "*.pdf")):
+            #pdf_path = re.sub(r'[\\/*?:"<>|]', '_', pdf_path)
+            raw_df = extraer_tabla_c(pdf_path)
+            if not raw_df.empty:
+                clean_df = limpiar_dataframe(raw_df)
+                df_master = pd.concat([df_master, clean_df], ignore_index=True)
+        
+        output_csv = "c_power_supply_positions.csv"
+        df_master.to_csv(output_csv, index=False)
+        print(f"¡Proceso completado! CSV generado: {output_csv}")
+
 
         #Crear ZIP de todos los PDFs
         print("Procesando pdf a ZIP...")
